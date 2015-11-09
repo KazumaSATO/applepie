@@ -1,5 +1,5 @@
 (ns applepie.core
-  (:use [compojure.route :only [files not-found files]]
+  (:use [compojure.route :only [files not-found files resources]]
         [org.httpkit.timer :only [schedule-task]]
         [org.httpkit.server :only [run-server with-channel on-close on-receive send!]]
         [compojure.handler :only [site]]
@@ -20,7 +20,8 @@
            ;           (GET "/" [] (file-response "index.html" {:root "public"}))
            (GET "/" [] (content-type (resource-response "index.html" {:root "public"}) "text/html"))
            (GET "/ws" [] log-handler)
-           (files "/static/")                         ;; static file url prefix /static, in `public` folder
+           (files "/")
+           (resources "/")
            (not-found "<p>Page not found.</p>"))      ;; all other, return 404
 
 
