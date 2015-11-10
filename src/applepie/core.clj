@@ -1,10 +1,15 @@
 (ns applepie.core
+  (:require [net.cgrand.enlive-html :as html])
   (:use [compojure.route :only [files not-found files resources]]
         [org.httpkit.timer :only [schedule-task]]
         [org.httpkit.server :only [run-server with-channel on-close on-receive send!]]
         [compojure.handler :only [site]]
         [compojure.core :only [defroutes GET POST DELETE ANY context]]
-        [ring.util.response :only [redirect file-response resource-response content-type]]))
+        [ring.util.response :only [redirect file-response resource-response content-type]]
+        [net.cgrand.enlive-html])
+  )
+
+(html/deftemplate index-page "templates/index.html" [])
 
 (defn log-handler [request]
   (with-channel request channel
@@ -17,8 +22,7 @@
                   (recur))))
 
 (defroutes all-routes
-           ;           (GET "/" [] (file-response "index.html" {:root "public"}))
-           (GET "/" [] (content-type (resource-response "index.html" {:root "public"}) "text/html"))
+           (GET "/" [] (apply str (index-page)))
            (GET "/ws" [] log-handler)
            (files "/")
            (resources "/")
