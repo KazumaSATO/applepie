@@ -7,4 +7,5 @@
                  [compojure "1.4.0"]
                  [javax.servlet/servlet-api "2.5"]
                  [enlive "1.1.6"]
-                 [http-kit "2.1.18"]])
+                 [http-kit "2.1.18"]]
+  )

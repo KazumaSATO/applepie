@@ -6,10 +6,14 @@
         [compojure.handler :only [site]]
         [compojure.core :only [defroutes GET POST DELETE ANY context]]
         [ring.util.response :only [redirect file-response resource-response content-type]]
-        [net.cgrand.enlive-html])
-  )
+        [net.cgrand.enlive-html]
+        [clojure.java.io :only [reader]]
+        [clojure.string :only [split]]
+        ))
 
 (html/deftemplate index-page "templates/index.html" [])
+
+
 
 (defn log-handler [request]
   (with-channel request channel
@@ -44,3 +48,10 @@
 (stop-server)
 (reset! server (run-server (site #'all-routes) {:port 8080}))
 
+(with-open [fin (reader "dev-resources/access.log")]
+  (doall  (for [ln (line-seq fin)]
+         (reduce (fn [chunk elm]
+                   (let [[k v :as kv] (split elm #":")]
+                     (assoc chunk (keyword k) v)))
+                 {}
+                 (split ln #"\t")))))
