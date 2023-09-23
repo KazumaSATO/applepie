@@ -1,0 +1,20 @@
+[project]
+name = "hello-cbor"
+version = "0.0.1"
+dependencies = [
+  "PyMySQL",
+  "cbor2"
+]
+[project.scripts]
+hello-cbor = "hello_cbor:main"
+
+
+[project.optional-dependencies]
+dev = [
+  "python-lsp-server[all]", 
+  "python-lsp-black"
+]
+[build-system]
+requires = ["setuptools"]
+[pylsp.plugins.black]
+enabled=true
