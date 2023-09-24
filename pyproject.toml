@@ -18,3 +18,6 @@ dev = [
 requires = ["setuptools"]
 [pylsp.plugins.black]
 enabled=true
+
+[tool.black]
+line-length = 79
