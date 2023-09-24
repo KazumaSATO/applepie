@@ -3,3 +3,6 @@ venv
 logs
 **/__pycache__
 **/*~
+*.log
+*.txt
+*.jsonl
