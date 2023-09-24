@@ -23,11 +23,12 @@ def _deserialize_cbors(filepaths: list[str]):
             yield cbor2.load(f)
 
 
-def _connect(host, userpass, db):
+def _connect(host, port, userpass, db):
     # Connect to the database
     return pymysql.connect(
         host=host,
         user=userpass,
+        port=port,
         password=userpass,
         database=db,
         cursorclass=pymysql.cursors.DictCursor,
@@ -36,13 +37,22 @@ def _connect(host, userpass, db):
 
 def _parse_args(args):
     parser = argparse.ArgumentParser()
-    subparsers = parser.add_subparsers()
+    subparsers = parser.add_subparsers(dest="command")
     extract = subparsers.add_parser("extract")
     extract.add_argument("log")
     extract.add_argument("host")
+    extract.add_argument("port", type=int)
     extract.add_argument("userpass")
     extract.add_argument("db")
     extract.add_argument("output")
+
+    update = subparsers.add_parser("update")
+    update.add_argument("update")
+    update.add_argument("host")
+    update.add_argument("port", type=int)
+    update.add_argument("userpass")
+    update.add_argument("db")
+
     return parser.parse_args(args)
 
 
@@ -122,13 +132,7 @@ def _decode_cbor(cbor: dict) -> typing.Optional[LogRecord]:
     return LogRecord(organization_id, industry_id, competitor_ids, segment_ids)
 
 
-def main():
-    # pattern = sys.argv[1]
-    # host = sys.argv[2]
-    # userpass = sys.argv[3]
-    # db = sys.argv[4]
-    options = _parse_args(sys.argv[1:])
-    connection = _connect(options.host, options.userpass, options.db)
+def _extract(connection, options):
     cbors = _find_files(options.log)
     with connection, open(options.output, "w") as f:
         sep = ""
@@ -148,6 +152,7 @@ def main():
                 )
             line = {
                 "organization_id": record.organization_id,
+                "industry_id": record.industry_id,
                 "segments": segments,
                 "competitors": [
                     {
@@ -160,4 +165,149 @@ def main():
             f.write(sep)
             json.dump(line, f)
             sep = "\n"
-            # json.dump()
+
+
+def _delete_segments(cursor, industry_id: int, organization_id: str):
+    num = cursor.execute(
+        """delete from disruptor_categories
+        where disruptor_categories.disruptor_id in (
+        select d.id disruptor_id from disruptor d
+        join crunchbase_initial_company ci
+        on d.company_company_id = ci.company_company_id
+        where d.report_id = %s and ci.organization_id = %s)
+        """,
+        (industry_id, organization_id),
+    )
+    logging.info(
+        f"Deleted {num} segments of {organization_id} "
+        f"in industry {industry_id}"
+    )
+
+
+def _add_segments(
+    cursor,
+    industry_id: int,
+    organization_id: str,
+    segment_entry_ids: list[str],
+):
+    if not segment_entry_ids:
+        return
+
+    num = cursor.execute(
+        f"""insert into disruptor_categories
+        select distinct d.id, cc.id
+        from disruptor d
+        join crunchbase_initial_company ci
+        on d.company_company_id = ci.company_company_id and d.report_id=%s
+        cross join company_category cc
+        where
+        ci.organization_id = %s and
+        cc.external_entry_id in ({', '.join(['%s'] * len(segment_entry_ids))});
+        """,
+        [industry_id, organization_id] + segment_entry_ids,
+    )
+    assert num == len(segment_entry_ids)
+
+
+def _delete_competitors(cursor, industry_id: int, organization_id: str):
+    num = cursor.execute(
+        """delete from disruptor_competitor_companies
+    where disruptor_competitor_companies.disruptor_id in (
+    select d.id
+    from disruptor d
+    join crunchbase_initial_company ci
+    on d.company_company_id = ci.company_company_id
+    and d.report_id = %s
+    and ci.organization_id = %s
+    );""",
+        (industry_id, organization_id),
+    )
+    logging.info(
+        f"Deleted {num} competitors of {organization_id} "
+        f"in industry {industry_id}"
+    )
+
+
+def _resolve_company_id(cursor, organization_id):
+    cursor.execute(
+        """select company_company_id
+        from crunchbase_initial_company
+        where organization_id = %s
+        """,
+        (organization_id,),
+    )
+    return cursor.fetchone()["company_company_id"]
+
+
+def _resolve_disruptor_id(cursor, industry_id, organization_id):
+    cursor.execute(
+        """select d.id from disruptor d
+        join crunchbase_initial_company ci
+        on d.company_company_id = ci.company_company_id
+        and d.report_id = %s
+        and ci.organization_id = %s""",
+        (industry_id, organization_id),
+    )
+    return cursor.fetchone()["id"]
+
+
+def _add_competitors(
+    cursor, industry_id: int, organization_id: str, competitors
+):
+    if not competitors:
+        return
+    disruptor_id = _resolve_disruptor_id(cursor, industry_id, organization_id)
+    new_competitors = [
+        {
+            "company_id": _resolve_company_id(cursor, c["organization_id"]),
+            "order": c["order"],
+        }
+        for c in competitors
+    ]
+    num = cursor.execute(
+        f"""insert into disruptor_competitor_companies(
+        disruptor_id,
+        competitor_companies_company_id,
+        competitor_companies_order)
+        values {', '.join([
+           f'({disruptor_id}, {c["company_id"]}, {c["order"]})'
+           for c in new_competitors
+        ])}
+        """
+    )
+    assert num == len(competitors)
+
+
+def _update(connection, options):
+    with open(options.update) as f, connection:
+        for record in [json.loads(r) for r in f.readlines()]:
+            with connection.cursor() as cursor:
+                industry_id = record["industry_id"]
+                organization_id = record["organization_id"]
+                _delete_segments(cursor, industry_id, organization_id)
+                _add_segments(
+                    cursor,
+                    industry_id,
+                    organization_id,
+                    record["segments"],
+                )
+                _delete_competitors(cursor, industry_id, organization_id)
+                _add_competitors(
+                    cursor, industry_id, organization_id, record["competitors"]
+                )
+        connection.commit()
+
+
+def main():
+    options = _parse_args(sys.argv[1:])
+    logging.basicConfig(level=logging.INFO)
+    connection = _connect(
+        options.host, options.port, options.userpass, options.db
+    )
+    if options.command == "extract":
+        _extract(connection, options)
+    elif options.command == "update":
+        _update(connection, options)
+    else:
+        logging.error(f"Unknown command: {options.command}")
+        sys.exit(1)
